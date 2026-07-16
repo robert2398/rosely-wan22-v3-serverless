@@ -7,7 +7,7 @@ export PIP_NO_CACHE_DIR=1
 export HF_HUB_ETAG_TIMEOUT=${HF_HUB_ETAG_TIMEOUT:-30}
 export HF_HUB_DOWNLOAD_TIMEOUT=${HF_HUB_DOWNLOAD_TIMEOUT:-600}
 
-APP_DIR=${APP_DIR:-/workspace/wan22-serverless}
+APP_DIR=${APP_DIR:-/workspace/vast-pyworker}
 COMFY_DIR=${COMFY_DIR:-/workspace/ComfyUI}
 COMFY_COMMIT=${COMFY_COMMIT:-8deaa4d911497f93bbd434a3821efab396f6981f}
 GGUF_COMMIT=${GGUF_COMMIT:-6ea2651e7df66d7585f6ffee804b20e92fb38b8a}
@@ -408,7 +408,7 @@ import json
 import os
 from pathlib import Path
 
-app = Path("/workspace/wan22-serverless")
+app = Path("/workspace/vast-pyworker")
 comfy = Path("/workspace/ComfyUI")
 
 high_name = os.environ.get(
@@ -491,7 +491,26 @@ cp \
   "$APP_DIR/workflows/wan22_i2v_custom_high_lora_v3.json" \
   /workspace/workflows/
 
-log "Installing serverless service scripts"
+log "Disabling generic ComfyUI services that conflict with the Wan stack"
+
+# The Vast ComfyUI serverless stack may provide these services. They use
+# ports 18188 and 18288 and would otherwise replace the custom Wan backend.
+for service in api-wrapper comfyui; do
+  supervisorctl stop "$service" >/dev/null 2>&1 || true
+done
+
+for config in \
+  /etc/supervisor/conf.d/api-wrapper.conf \
+  /etc/supervisor/conf.d/comfyui.conf; do
+  if [[ -f "$config" ]]; then
+    mv "$config" "${config}.disabled"
+  fi
+done
+
+supervisorctl reread >/dev/null 2>&1 || true
+supervisorctl update >/dev/null 2>&1 || true
+
+log "Installing Wan model services"
 
 mkdir -p /opt/wan22-serverless
 
@@ -499,9 +518,6 @@ cp "$APP_DIR/scripts/start_comfyui.sh" \
   /opt/wan22-serverless/
 
 cp "$APP_DIR/scripts/start_model_server.sh" \
-  /opt/wan22-serverless/
-
-cp "$APP_DIR/scripts/start_worker.sh" \
   /opt/wan22-serverless/
 
 chmod +x /opt/wan22-serverless/*.sh
@@ -515,7 +531,6 @@ supervisorctl update
 supervisorctl restart \
   wan-comfyui \
   wan-model-server \
-  wan-pyworker \
   || true
 
 log "Waiting for the local Wan model server health check"
@@ -543,7 +558,6 @@ log "Provisioning complete. Service status:"
 supervisorctl status \
   wan-comfyui \
   wan-model-server \
-  wan-pyworker \
   || true
 
 log "Relevant model files:"

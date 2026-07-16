@@ -1,0 +1,72 @@
+WAN V3: VAST BOOTSTRAP FIX
+
+WHY THIS CHANGE IS REQUIRED
+---------------------------
+Vast's start_server.sh owns the external Serverless PyWorker process. It looks
+for the custom repository at /workspace/vast-pyworker and runs worker.py from
+that directory. The previous package cloned the repository to
+/workspace/wan22-serverless and also started a second PyWorker under
+Supervisor. Vast therefore launched its fallback comfyui-json worker instead.
+
+FILES TO REPLACE
+----------------
+provision.sh
+requirements.txt
+scripts/start_comfyui.sh
+scripts/start_model_server.sh
+supervisor/wan-services.conf
+
+PUSH
+----
+chmod +x provision.sh scripts/start_comfyui.sh scripts/start_model_server.sh
+git add provision.sh requirements.txt scripts/start_comfyui.sh scripts/start_model_server.sh supervisor/wan-services.conf
+git commit -m "Route Vast Serverless to the custom Wan worker"
+git push origin main
+
+VAST TEMPLATE CHANGES
+---------------------
+Keep:
+  SERVERLESS=true
+  PYWORKER_REPO=https://github.com/robert2398/rosely-wan22-v3-serverless.git
+  PYWORKER_REF=main
+  PROVISIONING_SCRIPT=https://raw.githubusercontent.com/robert2398/rosely-wan22-v3-serverless/main/provision.sh
+  WAN_HIGH_MODEL_URL=https://civitai.com/api/download/models/2540892
+  WAN_HIGH_MODEL_FILENAME=Wan2_2_Enhanced_FastMove_HIGH_Q8.gguf
+  COMFYUI_ARGS="--lowvram --disable-smart-memory"
+  GENERATION_TIMEOUT_SECONDS=2400
+  KEEP_LOCAL_OUTPUTS=false
+
+Remove completely:
+  BACKEND
+  WORKER_TYPE
+  MODEL_TYPE
+  COMFY_MODEL
+  COMFYUI_WORKFLOWS
+  BENCHMARK_JSON_PATH
+  BENCHMARK_TEST_WIDTH
+  BENCHMARK_TEST_HEIGHT
+  BENCHMARK_TEST_STEPS
+
+Do not add an On-start Script.
+Keep Docker ENTRYPOINT launch mode.
+
+REDEPLOY
+--------
+Delete the current workergroup, not the endpoint. Create a fresh workergroup
+from the edited template.
+
+SUCCESS LOGS
+------------
+The correct worker must show:
+  BACKEND:
+  SERVER_DIR: /workspace/vast-pyworker
+  Running worker.py
+  To see the GUI go to: http://127.0.0.1:18189
+  Uvicorn running on http://127.0.0.1:18288
+  vast-benchmark-wan22-v3
+
+It must not show:
+  BACKEND: comfyui-json
+  Running workers.comfyui-json.worker
+  modifier: Text2Image
+  workflows/text2image.json
