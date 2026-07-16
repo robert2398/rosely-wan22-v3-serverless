@@ -1,0 +1,22 @@
+IMPORTANT TEMPLATE CHANGE
+=========================
+
+Change the Vast template Docker image from:
+
+vastai/base-image:cuda-12.8.1-cudnn-devel-ubuntu24.04-py312
+
+to:
+
+vastai/pytorch:cuda-12.8.1-auto
+
+The updated provision.sh intentionally reuses PyTorch from /venv/main and fails fast
+when the plain base image is used. This prevents downloading several gigabytes of
+Torch/CUDA wheels during every Serverless worker provisioning attempt.
+
+After pushing provision.sh and requirements.txt:
+
+1. Stop/delete the current failed workergroup.
+2. Edit the Wan template and change only the Docker image as shown above.
+3. Keep PROVISIONING_SCRIPT pointing to:
+   https://raw.githubusercontent.com/robert2398/rosely-wan22-v3-serverless/main/provision.sh
+4. Create a fresh workergroup. Existing workers will not pick up the new Git commit.
