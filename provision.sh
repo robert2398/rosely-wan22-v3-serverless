@@ -669,11 +669,47 @@ cp \
   /etc/supervisor/conf.d/wan-services.conf
 
 supervisorctl reread
+
+# `supervisorctl update` starts newly-added programs when autostart=true.
+# Do not immediately restart them: terminating ComfyUI while its CUDA context
+# is being created can leave the GPU temporarily unavailable and make the next
+# start fail at torch.cuda.mem_get_info() with cudaErrorMemoryAllocation.
 supervisorctl update
-supervisorctl restart \
-  wan-comfyui \
-  wan-model-server \
-  || true
+
+log "Waiting for Wan ComfyUI to become healthy"
+comfy_ok=0
+
+for _ in $(seq 1 180); do
+  if curl -fsS \
+    http://127.0.0.1:18189/system_stats \
+    >/dev/null 2>&1; then
+    comfy_ok=1
+    break
+  fi
+
+  comfy_state=$(supervisorctl status wan-comfyui 2>/dev/null | awk '{print $2}' || true)
+  if [[ "$comfy_state" == "FATAL" || "$comfy_state" == "EXITED" ]]; then
+    break
+  fi
+
+  sleep 2
+done
+
+(( comfy_ok == 1 )) || {
+  supervisorctl status || true
+  nvidia-smi || true
+  tail -250 /var/log/portal/comfyui.log 2>/dev/null || true
+  fail "Wan ComfyUI did not become healthy within 360 seconds"
+}
+
+log "Wan ComfyUI is healthy"
+
+# The model server is also autostarted by supervisorctl update. Start it only
+# if Supervisor did not already leave it running.
+model_state=$(supervisorctl status wan-model-server 2>/dev/null | awk '{print $2}' || true)
+if [[ "$model_state" != "RUNNING" && "$model_state" != "STARTING" ]]; then
+  supervisorctl start wan-model-server
+fi
 
 log "Waiting for the local Wan model server health check"
 health_ok=0
@@ -686,13 +722,19 @@ for _ in $(seq 1 180); do
     break
   fi
 
+  model_state=$(supervisorctl status wan-model-server 2>/dev/null | awk '{print $2}' || true)
+  if [[ "$model_state" == "FATAL" || "$model_state" == "EXITED" ]]; then
+    break
+  fi
+
   sleep 2
 done
 
 (( health_ok == 1 )) || {
   supervisorctl status || true
-  tail -200 /var/log/portal/comfyui.log 2>/dev/null || true
-  tail -200 /var/log/portal/model-server.log 2>/dev/null || true
+  nvidia-smi || true
+  tail -250 /var/log/portal/comfyui.log 2>/dev/null || true
+  tail -250 /var/log/portal/model-server.log 2>/dev/null || true
   fail "Wan model server did not become healthy within 360 seconds"
 }
 
