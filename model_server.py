@@ -98,8 +98,8 @@ def _validate_dimensions(width: int, height: int, length: int, fps: int) -> None
         raise HTTPException(status_code=422, detail="width and height must not exceed 1024")
     if length < 5 or (length - 1) % 4:
         raise HTTPException(status_code=422, detail="length must follow 4n+1, for example 17, 33 or 49")
-    if length > 81:
-        raise HTTPException(status_code=422, detail="length must not exceed 81")
+    if length > 161:
+        raise HTTPException(status_code=422, detail="length must not exceed 161")
     if fps < 1 or fps > 60:
         raise HTTPException(status_code=422, detail="fps must be between 1 and 60")
 
