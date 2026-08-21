@@ -11,7 +11,6 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 
 import boto3
 import httpx
@@ -266,13 +265,12 @@ def _upload_output(path: Path, request_id: str) -> str | None:
     key = f"{prefix}/{request_id}{path.suffix.lower()}"
     content_type = mimetypes.guess_type(path.name)[0] or "video/mp4"
     client.upload_file(str(path), bucket, key, ExtraArgs={"ContentType": content_type})
-    public_base = (os.getenv("S3_PUBLIC_BASE_URL") or "").rstrip("/")
-    if public_base:
-        return f"{public_base}/{quote(key)}"
-    endpoint = (os.getenv("S3_ENDPOINT_URL") or "").rstrip("/")
-    if endpoint:
-        return f"{endpoint}/{bucket}/{quote(key)}"
-    return f"s3://{bucket}/{key}"
+    expires_in = int(os.getenv("S3_PRESIGNED_URL_EXPIRES_SECONDS", "3600"))
+    return client.generate_presigned_url(
+        ClientMethod="get_object",
+        Params={"Bucket": bucket, "Key": key},
+        ExpiresIn=expires_in,
+    )
 
 
 @app.get("/health")
