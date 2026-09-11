@@ -150,9 +150,9 @@ kwargs = {
     "endpoint_url": endpoint_url,
     "config": Config(connect_timeout=60, read_timeout=900, tcp_keepalive=True, retries={"mode": "standard", "max_attempts": 20}),
 }
-access = os.environ.get("S3_ACCESS_KEY_ID") or os.environ.get("AWS_ACCESS_KEY_ID")
-secret = os.environ.get("S3_SECRET_ACCESS_KEY") or os.environ.get("AWS_SECRET_ACCESS_KEY")
-token = os.environ.get("S3_SESSION_TOKEN") or os.environ.get("AWS_SESSION_TOKEN")
+access = os.environ.get("ROSELY_WAN22_S3_ACCESS_KEY_ID")
+secret = os.environ.get("ROSELY_WAN22_S3_SECRET_ACCESS_KEY")
+token = os.environ.get("ROSELY_WAN22_S3_SESSION_TOKEN")
 if access and secret:
     kwargs.update(aws_access_key_id=access, aws_secret_access_key=secret, aws_session_token=token)
 

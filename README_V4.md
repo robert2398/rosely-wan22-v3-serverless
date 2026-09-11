@@ -62,7 +62,7 @@ GENERATION_TIMEOUT_SECONDS=2400
 KEEP_LOCAL_OUTPUTS=false
 ```
 
-Provide `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` only when the worker cannot use the default AWS credential chain.
+Provide `ROSELY_WAN22_S3_ACCESS_KEY_ID` / `ROSELY_WAN22_S3_SECRET_ACCESS_KEY` only when the worker cannot use the default AWS credential chain.
 
 ## Provisioning behavior
 

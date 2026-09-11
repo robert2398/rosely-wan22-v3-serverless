@@ -285,9 +285,9 @@ def _s3_client():
         "endpoint_url": os.getenv("S3_ENDPOINT_URL") or None,
         "region_name": os.getenv("S3_REGION") or None,
     }
-    access_key = os.getenv("S3_ACCESS_KEY_ID") or os.getenv("AWS_ACCESS_KEY_ID")
-    secret_key = os.getenv("S3_SECRET_ACCESS_KEY") or os.getenv("AWS_SECRET_ACCESS_KEY")
-    session_token = os.getenv("S3_SESSION_TOKEN") or os.getenv("AWS_SESSION_TOKEN")
+    access_key = os.getenv("ROSELY_WAN22_S3_ACCESS_KEY_ID")
+    secret_key = os.getenv("ROSELY_WAN22_S3_SECRET_ACCESS_KEY")
+    session_token = os.getenv("ROSELY_WAN22_S3_SESSION_TOKEN")
     if access_key and secret_key:
         kwargs.update(
             aws_access_key_id=access_key,
