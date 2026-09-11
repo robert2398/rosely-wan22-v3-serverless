@@ -66,6 +66,18 @@ EXPECTED_MODELS = {
 app = FastAPI(title="Rosely Wan 2.2 V4 Matched FP8 Serverless Model Server")
 generation_lock = asyncio.Lock()
 
+# Vast-facing health checks must distinguish "busy" from "dead".
+# Heavy Wan inference can make ComfyUI's /system_stats slow/unresponsive for
+# several seconds even though generation is healthy. Returning 503 for that
+# transient condition causes Vast PyWorker to mark the backend errored.
+COMFY_HEALTH_TIMEOUT_SECONDS = float(
+    os.getenv("COMFY_HEALTH_TIMEOUT_SECONDS", "3")
+)
+COMFY_HEALTH_GRACE_SECONDS = float(
+    os.getenv("COMFY_HEALTH_GRACE_SECONDS", "120")
+)
+_last_comfy_health_success: float | None = None
+
 
 class GenerateEnvelope(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -493,39 +505,117 @@ def _upload_output(
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
+    global _last_comfy_health_success
+
     missing = [
         name
         for name, path in EXPECTED_MODELS.items()
         if not path.exists()
     ]
 
-    comfy_ok = False
-
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(f"{COMFY_URL}/system_stats")
-            comfy_ok = response.status_code == 200
-    except Exception:
-        comfy_ok = False
-
-    if missing or not comfy_ok:
+    # Missing model files are a real fatal readiness problem.
+    if missing:
         raise HTTPException(
             status_code=503,
             detail={
-                "comfyui": comfy_ok,
+                "status": "unhealthy",
+                "reason": "missing_models",
                 "missing_models": missing,
+                "generation_active": generation_lock.locked(),
             },
         )
 
-    return {
-        "status": "ok",
-        "comfyui": True,
-        "workflow": WORKFLOW_PATH.name,
-        "model_pair": "wan22EnhancedNSFWSVICamera_nsfwV2FP8H/L",
-        "output_s3_configured": bool(OUTPUT_S3_BUCKET),
-        "output_s3_bucket": OUTPUT_S3_BUCKET,
-        "output_s3_prefix": OUTPUT_S3_PREFIX if OUTPUT_S3_BUCKET else None,
-    }
+    # IMPORTANT:
+    # While Wan is actively generating, do NOT probe ComfyUI /system_stats.
+    # A large HIGH/LOW pass can temporarily make that endpoint slow enough to
+    # exceed the health timeout. The model is busy, not dead, so Vast must see
+    # HTTP 200 and keep the worker alive.
+    if generation_lock.locked():
+        return {
+            "status": "ok",
+            "comfyui": "busy",
+            "generation_active": True,
+            "workflow": WORKFLOW_PATH.name,
+            "model_pair": "wan22EnhancedNSFWSVICamera_nsfwV2FP8H/L",
+            "output_s3_configured": bool(OUTPUT_S3_BUCKET),
+            "output_s3_bucket": OUTPUT_S3_BUCKET,
+            "output_s3_prefix": OUTPUT_S3_PREFIX if OUTPUT_S3_BUCKET else None,
+        }
+
+    comfy_ok = False
+    comfy_error: str | None = None
+
+    try:
+        timeout = httpx.Timeout(
+            COMFY_HEALTH_TIMEOUT_SECONDS,
+            connect=COMFY_HEALTH_TIMEOUT_SECONDS,
+        )
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(f"{COMFY_URL}/system_stats")
+            comfy_ok = response.status_code == 200
+            if not comfy_ok:
+                comfy_error = f"HTTP {response.status_code}"
+    except Exception as exc:
+        comfy_error = f"{type(exc).__name__}: {exc}"
+
+    now = time.monotonic()
+
+    if comfy_ok:
+        _last_comfy_health_success = now
+        return {
+            "status": "ok",
+            "comfyui": "ready",
+            "generation_active": False,
+            "workflow": WORKFLOW_PATH.name,
+            "model_pair": "wan22EnhancedNSFWSVICamera_nsfwV2FP8H/L",
+            "output_s3_configured": bool(OUTPUT_S3_BUCKET),
+            "output_s3_bucket": OUTPUT_S3_BUCKET,
+            "output_s3_prefix": OUTPUT_S3_PREFIX if OUTPUT_S3_BUCKET else None,
+        }
+
+    # If ComfyUI was healthy recently, treat a short idle probe failure as
+    # transient rather than immediately poisoning the Vast worker. This covers
+    # post-generation VRAM offload / cleanup stalls.
+    if _last_comfy_health_success is not None:
+        seconds_since_success = now - _last_comfy_health_success
+
+        if seconds_since_success <= COMFY_HEALTH_GRACE_SECONDS:
+            logger.warning(
+                "ComfyUI health probe failed transiently (%s); "
+                "last success %.1fs ago. Returning 200 during %.0fs grace window.",
+                comfy_error,
+                seconds_since_success,
+                COMFY_HEALTH_GRACE_SECONDS,
+            )
+
+            return {
+                "status": "degraded",
+                "comfyui": "temporarily_unreachable",
+                "generation_active": False,
+                "last_comfy_success_seconds_ago": round(seconds_since_success, 1),
+                "health_grace_seconds": COMFY_HEALTH_GRACE_SECONDS,
+                "workflow": WORKFLOW_PATH.name,
+                "model_pair": "wan22EnhancedNSFWSVICamera_nsfwV2FP8H/L",
+                "output_s3_configured": bool(OUTPUT_S3_BUCKET),
+                "output_s3_bucket": OUTPUT_S3_BUCKET,
+                "output_s3_prefix": OUTPUT_S3_PREFIX if OUTPUT_S3_BUCKET else None,
+            }
+
+    # No recent successful ComfyUI health check: this is now a real failure.
+    raise HTTPException(
+        status_code=503,
+        detail={
+            "status": "unhealthy",
+            "reason": "comfyui_unreachable",
+            "comfyui_error": comfy_error,
+            "generation_active": False,
+            "last_comfy_success_seconds_ago": (
+                None
+                if _last_comfy_health_success is None
+                else round(now - _last_comfy_health_success, 1)
+            ),
+        },
+    )
 
 
 @app.post("/generate/sync")
