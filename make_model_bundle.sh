@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+SOURCE_DIR=${1:-/mnt/h3-build/wan22-enhanced-bundle}
+OUTPUT=${2:-/mnt/h3-build/wan22-enhanced-fp8-v4.tar.zst}
+
+[[ -d "$SOURCE_DIR/models" ]] || { echo "Missing $SOURCE_DIR/models" >&2; exit 1; }
+
+cd "$SOURCE_DIR"
+sha256sum -c <(cat <<'SHA'
+96a4603ac80992b33713ae279ee833325a83b83181b97cd2946beafb73175374  models/diffusion_models/wan22EnhancedNSFWSVICamera_nsfwV2FP8H.safetensors
+fa74873fad4f92d6125bf592369996b26f3792935f856a18f837a5e0dea8eab9  models/diffusion_models/wan22EnhancedNSFWSVICamera_nsfwV2FP8L.safetensors
+c3355d30191f1f066b26d93fba017ae9809dce6c627dda5f6a66eaa651204f68  models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors
+2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b  models/vae/wan_2.1_vae.safetensors
+SHA
+)
+
+tar -cf - models | zstd -T0 -1 -o "$OUTPUT"
+zstd -t "$OUTPUT"
+echo "Created: $OUTPUT"
+ls -lh "$OUTPUT"

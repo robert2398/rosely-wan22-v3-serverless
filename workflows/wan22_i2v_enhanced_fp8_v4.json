@@ -1,0 +1,149 @@
+{
+  "123": {
+    "inputs": {
+      "filename_prefix": "video/wan22_v4",
+      "format": "auto",
+      "codec": "auto",
+      "video-preview": "",
+      "video": ["116:121", 0]
+    },
+    "class_type": "SaveVideo",
+    "_meta": {"title": "Save Video"}
+  },
+  "116:84": {
+    "inputs": {
+      "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "wan",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {"title": "Load UMT5"}
+  },
+  "116:90": {
+    "inputs": {"vae_name": "wan_2.1_vae.safetensors"},
+    "class_type": "VAELoader",
+    "_meta": {"title": "Load Wan VAE"}
+  },
+  "116:95": {
+    "inputs": {
+      "unet_name": "wan22EnhancedNSFWSVICamera_nsfwV2FP8H.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {"title": "Load Enhanced FP8 HIGH"}
+  },
+  "116:96": {
+    "inputs": {
+      "unet_name": "wan22EnhancedNSFWSVICamera_nsfwV2FP8L.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {"title": "Load Enhanced FP8 LOW"}
+  },
+  "116:103": {
+    "inputs": {
+      "shift": 5.0,
+      "model": ["116:96", 0]
+    },
+    "class_type": "ModelSamplingSD3",
+    "_meta": {"title": "LOW ModelSamplingSD3"}
+  },
+  "116:104": {
+    "inputs": {
+      "shift": 5.0,
+      "model": ["116:95", 0]
+    },
+    "class_type": "ModelSamplingSD3",
+    "_meta": {"title": "HIGH ModelSamplingSD3"}
+  },
+  "116:86": {
+    "inputs": {
+      "add_noise": "enable",
+      "noise_seed": 357915181547070,
+      "steps": 4,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "start_at_step": 0,
+      "end_at_step": 2,
+      "return_with_leftover_noise": "enable",
+      "model": ["116:104", 0],
+      "positive": ["116:98", 0],
+      "negative": ["116:98", 1],
+      "latent_image": ["116:98", 2]
+    },
+    "class_type": "KSamplerAdvanced",
+    "_meta": {"title": "HIGH KSampler"}
+  },
+  "116:85": {
+    "inputs": {
+      "add_noise": "disable",
+      "noise_seed": 0,
+      "steps": 4,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "start_at_step": 2,
+      "end_at_step": 4,
+      "return_with_leftover_noise": "disable",
+      "model": ["116:103", 0],
+      "positive": ["116:98", 0],
+      "negative": ["116:98", 1],
+      "latent_image": ["116:86", 0]
+    },
+    "class_type": "KSamplerAdvanced",
+    "_meta": {"title": "LOW KSampler"}
+  },
+  "116:122": {
+    "inputs": {"image": "input.png"},
+    "class_type": "LoadImage",
+    "_meta": {"title": "Load Image"}
+  },
+  "116:98": {
+    "inputs": {
+      "width": 480,
+      "height": 640,
+      "length": 49,
+      "batch_size": 1,
+      "positive": ["116:93", 0],
+      "negative": ["116:89", 0],
+      "vae": ["116:90", 0],
+      "start_image": ["116:122", 0]
+    },
+    "class_type": "WanImageToVideo",
+    "_meta": {"title": "Wan Image To Video"}
+  },
+  "116:93": {
+    "inputs": {
+      "text": "Smooth continuous natural movement, consistent identity, realistic lighting, stable temporal motion.",
+      "clip": ["116:84", 0]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {"title": "Positive Prompt"}
+  },
+  "116:89": {
+    "inputs": {
+      "text": "overexposed, static, blurry details, subtitles, painting, still image, worst quality, low quality, jpeg artifacts, malformed anatomy, deformed limbs, fused fingers, cluttered background",
+      "clip": ["116:84", 0]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {"title": "Negative Prompt"}
+  },
+  "116:87": {
+    "inputs": {
+      "samples": ["116:85", 0],
+      "vae": ["116:90", 0]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {"title": "VAE Decode"}
+  },
+  "116:121": {
+    "inputs": {
+      "fps": 16,
+      "bit_depth": 8,
+      "images": ["116:87", 0]
+    },
+    "class_type": "CreateVideo",
+    "_meta": {"title": "Create Video"}
+  }
+}

@@ -25,7 +25,7 @@ COMFY_URL = os.getenv("COMFY_URL", "http://127.0.0.1:18189")
 WORKFLOW_PATH = Path(
     os.getenv(
         "WAN_WORKFLOW_PATH",
-        "/workspace/workflows/wan22_i2v_custom_high_lora_v3.json",
+        "/workspace/workflows/wan22_i2v_enhanced_fp8_v4.json",
     )
 )
 INPUT_DIR = Path(os.getenv("COMFY_INPUT_DIR", "/workspace/ComfyUI/input"))
@@ -34,14 +34,22 @@ GENERATION_TIMEOUT = int(os.getenv("GENERATION_TIMEOUT_SECONDS", "2400"))
 KEEP_LOCAL_OUTPUTS = os.getenv("KEEP_LOCAL_OUTPUTS", "false").lower() == "true"
 
 EXPECTED_MODELS = {
-    "high": Path("/workspace/ComfyUI/models/unet/Wan2_2_Enhanced_FastMove_HIGH_Q8.gguf"),
-    "low": Path("/workspace/ComfyUI/models/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors"),
-    "clip": Path("/workspace/ComfyUI/models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"),
+    "high": Path(
+        "/workspace/ComfyUI/models/diffusion_models/"
+        "wan22EnhancedNSFWSVICamera_nsfwV2FP8H.safetensors"
+    ),
+    "low": Path(
+        "/workspace/ComfyUI/models/diffusion_models/"
+        "wan22EnhancedNSFWSVICamera_nsfwV2FP8L.safetensors"
+    ),
+    "clip": Path(
+        "/workspace/ComfyUI/models/text_encoders/"
+        "umt5_xxl_fp8_e4m3fn_scaled.safetensors"
+    ),
     "vae": Path("/workspace/ComfyUI/models/vae/wan_2.1_vae.safetensors"),
-    "low_lora": Path("/workspace/ComfyUI/models/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors"),
 }
 
-app = FastAPI(title="Rosely Wan 2.2 V3 Serverless Model Server")
+app = FastAPI(title="Rosely Wan 2.2 V4 Matched FP8 Serverless Model Server")
 generation_lock = asyncio.Lock()
 
 
@@ -60,21 +68,34 @@ def _load_base_workflow() -> dict[str, Any]:
         "116:90",
         "116:95",
         "116:96",
-        "116:102",
+        "116:103",
         "116:104",
         "116:86",
+        "116:85",
         "116:122",
         "116:98",
         "116:93",
+        "116:89",
+        "116:87",
         "116:121",
     ]
     missing = [node_id for node_id in required if node_id not in workflow]
     if missing:
         raise RuntimeError(f"Workflow missing nodes: {missing}")
-    if workflow["116:95"].get("class_type") != "UnetLoaderGGUF":
-        raise RuntimeError("Node 116:95 must be UnetLoaderGGUF")
+
+    for node_id in ("116:95", "116:96"):
+        if workflow[node_id].get("class_type") != "UNETLoader":
+            raise RuntimeError(f"Node {node_id} must use UNETLoader")
+
     if workflow["116:104"]["inputs"].get("model") != ["116:95", 0]:
         raise RuntimeError("HIGH branch must route 116:95 -> 116:104")
+    if workflow["116:103"]["inputs"].get("model") != ["116:96", 0]:
+        raise RuntimeError("LOW branch must route 116:96 -> 116:103")
+
+    # v4 intentionally has no Lightning/LightX2V LoRA node.
+    if "116:102" in workflow:
+        raise RuntimeError("v4 workflow must not contain the old LOW LightX2V LoRA node 116:102")
+
     return workflow
 
 
@@ -147,7 +168,12 @@ def _patch_workflow(data: dict[str, Any], image_name: str, request_id: str) -> d
     length = int(data.get("length", 33))
     fps = int(data.get("fps", 16))
     seed = int(data.get("seed", int.from_bytes(os.urandom(6), "big")))
-    prompt = str(data.get("prompt", "Subtle natural movement, stable camera, consistent lighting."))
+    prompt = str(
+        data.get(
+            "prompt",
+            "Smooth natural movement, stable camera, consistent identity and lighting.",
+        )
+    )
     negative_prompt = data.get("negative_prompt")
     _validate_dimensions(width, height, length, fps)
 
@@ -162,8 +188,9 @@ def _patch_workflow(data: dict[str, Any], image_name: str, request_id: str) -> d
     workflow["116:121"]["inputs"]["fps"] = fps
     workflow["123"]["inputs"]["filename_prefix"] = f"video/{request_id}"
 
-    # Preserve the v3 routing exactly: enhanced HIGH GGUF directly into HIGH sampling.
+    # Enforce the matched v4 pair on every request.
     workflow["116:104"]["inputs"]["model"] = ["116:95", 0]
+    workflow["116:103"]["inputs"]["model"] = ["116:96", 0]
     return workflow
 
 
@@ -191,7 +218,10 @@ async def _submit_and_wait(workflow: dict[str, Any], request_id: str) -> tuple[s
                 item = history[prompt_id]
                 status = item.get("status", {})
                 if status.get("status_str") == "error":
-                    raise HTTPException(status_code=500, detail={"request_id": request_id, "status": status})
+                    raise HTTPException(
+                        status_code=500,
+                        detail={"request_id": request_id, "status": status},
+                    )
                 return prompt_id, item
             await asyncio.sleep(5)
 
@@ -228,7 +258,11 @@ def _resolve_output(item: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
             return output_path, metadata
 
     candidates = sorted(
-        (p for p in OUTPUT_DIR.rglob("*") if p.suffix.lower() in {".mp4", ".webm", ".mov", ".mkv"}),
+        (
+            p
+            for p in OUTPUT_DIR.rglob("*")
+            if p.suffix.lower() in {".mp4", ".webm", ".mov", ".mkv"}
+        ),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     )
@@ -243,17 +277,24 @@ def _resolve_output(item: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
 
 def _s3_client():
     bucket = os.getenv("S3_BUCKET")
-    access_key = os.getenv("S3_ACCESS_KEY_ID")
-    secret_key = os.getenv("S3_SECRET_ACCESS_KEY")
-    if not (bucket and access_key and secret_key):
+    if not bucket:
         return None
-    return boto3.client(
-        "s3",
-        endpoint_url=os.getenv("S3_ENDPOINT_URL") or None,
-        region_name=os.getenv("S3_REGION") or None,
-        aws_access_key_id=access_key,
-        aws_secret_access_key=secret_key,
-    )
+
+    kwargs: dict[str, Any] = {
+        "service_name": "s3",
+        "endpoint_url": os.getenv("S3_ENDPOINT_URL") or None,
+        "region_name": os.getenv("S3_REGION") or None,
+    }
+    access_key = os.getenv("S3_ACCESS_KEY_ID") or os.getenv("AWS_ACCESS_KEY_ID")
+    secret_key = os.getenv("S3_SECRET_ACCESS_KEY") or os.getenv("AWS_SECRET_ACCESS_KEY")
+    session_token = os.getenv("S3_SESSION_TOKEN") or os.getenv("AWS_SESSION_TOKEN")
+    if access_key and secret_key:
+        kwargs.update(
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            aws_session_token=session_token,
+        )
+    return boto3.client(**kwargs)
 
 
 def _upload_output(path: Path, request_id: str) -> str | None:
@@ -261,7 +302,7 @@ def _upload_output(path: Path, request_id: str) -> str | None:
     bucket = os.getenv("S3_BUCKET")
     if client is None or not bucket:
         return None
-    prefix = os.getenv("S3_PREFIX", "generated/wan22").strip("/")
+    prefix = os.getenv("S3_PREFIX", "generated/wan22-v4").strip("/")
     key = f"{prefix}/{request_id}{path.suffix.lower()}"
     content_type = mimetypes.guess_type(path.name)[0] or "video/mp4"
     client.upload_file(str(path), bucket, key, ExtraArgs={"ContentType": content_type})
@@ -284,8 +325,16 @@ async def health() -> dict[str, Any]:
     except Exception:
         comfy_ok = False
     if missing or not comfy_ok:
-        raise HTTPException(status_code=503, detail={"comfyui": comfy_ok, "missing_models": missing})
-    return {"status": "ok", "comfyui": True, "workflow": WORKFLOW_PATH.name}
+        raise HTTPException(
+            status_code=503,
+            detail={"comfyui": comfy_ok, "missing_models": missing},
+        )
+    return {
+        "status": "ok",
+        "comfyui": True,
+        "workflow": WORKFLOW_PATH.name,
+        "model_pair": "wan22EnhancedNSFWSVICamera_nsfwV2FP8H/L",
+    }
 
 
 @app.post("/generate/sync")
